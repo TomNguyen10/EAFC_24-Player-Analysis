@@ -6,65 +6,68 @@ from sklearn.decomposition import PCA
 import matplotlib.pyplot as plt
 from read_data import read_soccer_data
 
-# Load data using the data loader function
-file_path = "/Users/tomnguyen/Documents/DePauw/Junior/Data Mining/final_project/archive/male_players.csv"
-soccer_data = read_soccer_data(file_path)
 
-# Load pre-trained GloVe vectors
-# Replace with the path to your GloVe file
-glove_path = '/Users/tomnguyen/Documents/DePauw/Junior/Data Mining/final_project/glove.6B/glove.6B.50d.txt'
-word_vectors = {}
+def main():
+    # Load data using the data loader function
+    file_path = "archive/male_players.csv"
+    soccer_data = read_soccer_data(file_path)
 
-with open(glove_path, 'r', encoding='utf-8') as glove_file:
-    for line in glove_file:
-        values = line.split()
-        word = values[0]
-        vector = np.asarray(values[1:], dtype='float32')
-        word_vectors[word] = vector
+    # Load pre-trained GloVe vectors
+    glove_path = 'glove.6B/glove.6B.50d.txt'
+    word_vectors = load_glove_vectors(glove_path)
 
-# Extract relevant textual features from your DataFrame
-text_features = ['fifa_version', 'player_positions', 'overall', 'potential', 'age', 'height_cm', 'weight_kg', 'club_team_id', 'league_id', 'league_level', 'nationality_id', 'weak_foot', 'skill_moves', 'international_reputation', 'pace', 'shooting', 'passing', 'dribbling', 'defending', 'physic', 'attacking_crossing', 'attacking_finishing', 'attacking_heading_accuracy', 'attacking_short_passing', 'attacking_volleys', 'skill_dribbling', 'skill_curve', 'skill_fk_accuracy', 'skill_long_passing', 'skill_ball_control', 'movement_acceleration', 'movement_sprint_speed', 'movement_agility', 'movement_reactions', 'movement_balance', 'power_shot_power',
-                 'power_jumping', 'power_stamina', 'power_strength', 'power_long_shots', 'mentality_aggression', 'mentality_interceptions', 'mentality_positioning', 'mentality_vision', 'mentality_penalties', 'mentality_composure', 'defending_marking_awareness', 'defending_standing_tackle', 'defending_sliding_tackle', 'goalkeeping_diving', 'goalkeeping_handling', 'goalkeeping_kicking', 'goalkeeping_positioning', 'goalkeeping_reflexes', 'goalkeeping_speed', 'ls', 'st', 'rs', 'lw', 'lf', 'cf', 'rf', 'rw', 'lam', 'cam', 'ram', 'lm', 'lcm', 'cm', 'rcm', 'rm', 'lwb', 'ldm', 'cdm', 'rdm', 'rwb', 'lb', 'lcb', 'cb', 'rcb', 'rb', 'gk']
-text_corpus = soccer_data[text_features].astype(
-    str).apply(lambda row: ' '.join(row), axis=1)
+    text_features = [col for col in soccer_data.columns]
+    text_matrix = process_text_features(
+        soccer_data, text_features, word_vectors)
 
-# Extract textual features using GloVe embeddings
-text_matrix = np.array([np.mean([word_vectors.get(word, np.zeros(50))
-                                for word in text.split()], axis=0) for text in text_corpus])
+    input_player_name = 'R. Lewandowski'
+    top_similar_players = get_top_similar_players(
+        input_player_name, text_matrix, soccer_data, word_vectors, consider_positions=False)
+    top_similar_players_positions = get_top_similar_players(
+        input_player_name, text_matrix, soccer_data, word_vectors, consider_positions=True)
 
-# Normalize textual features
-text_matrix = normalize(text_matrix, norm='l2', axis=0)
+    num_players = 1000
+    num_clusters = 5
+    cluster_assignments = cluster_players(
+        text_matrix[:num_players], num_clusters)
+    print_top_players(top_similar_players,
+                      f"Top 5 players with the most similarity with {input_player_name}", input_player_name)
+    print_top_players(top_similar_players_positions,
+                      f"Top 5 players with at least one common position as {input_player_name}", input_player_name)
 
-
-def get_player_vector(player_name):
-    player_row = soccer_data[soccer_data['short_name'] == player_name]
-    if not player_row.empty:
-        text = ' '.join(player_row[text_features].astype(str).values[0])
-        vector = np.mean([word_vectors.get(word, np.zeros(50))
-                         for word in text.split()], axis=0)
-        return vector
-    else:
-        return None
+    visualize_clusters(text_matrix[:num_players],
+                       cluster_assignments, soccer_data, num_clusters, num_players)
 
 
-def calculate_similarities(input_vector):
-    if input_vector is not None:
-        similarities = cosine_similarity([input_vector], text_matrix)[0]
-        return similarities
-    else:
-        return None
+def load_glove_vectors(glove_path):
+    word_vectors = {}
+    with open(glove_path, 'r', encoding='utf-8') as glove_file:
+        for line in glove_file:
+            values = line.split()
+            word = values[0]
+            vector = np.asarray(values[1:], dtype='float32')
+            word_vectors[word] = vector
+    return word_vectors
 
 
-def get_top_similar_players(input_player_name, top_n=100, consider_positions=False):
-    input_vector = get_player_vector(input_player_name)
+def process_text_features(soccer_data, text_features, word_vectors):
+    text_corpus = soccer_data[text_features].astype(
+        str).apply(lambda row: ' '.join(row), axis=1)
+    text_matrix = np.array([np.mean([word_vectors.get(word, np.zeros(50))
+                                     for word in text.split()], axis=0) for text in text_corpus])
+    text_matrix = normalize(text_matrix, norm='l2', axis=0)
+    return text_matrix
+
+
+def get_top_similar_players(input_player_name, text_matrix, soccer_data, word_vectors, top_n=100, consider_positions=False):
+    input_vector = get_player_vector(
+        input_player_name, soccer_data, word_vectors)
     similarities = cosine_similarity([input_vector], text_matrix)[0]
 
     if input_vector is not None:
-        # Get indices of top N most similar players
         top_indices = np.argsort(similarities)[::-1][:top_n]
 
         if consider_positions:
-            # Filter top players based on having at least one common player_positions
             input_positions = set(
                 soccer_data.loc[soccer_data['short_name'] == input_player_name, 'player_positions'].values[0].split(','))
             top_players = [(soccer_data.iloc[i]['short_name'],
@@ -74,7 +77,6 @@ def get_top_similar_players(input_player_name, top_n=100, consider_positions=Fal
                            if any(pos in input_positions for pos in soccer_data.iloc[i]['player_positions'].split(','))]
 
         else:
-            # Include all top players
             top_players = [(soccer_data.iloc[i]['short_name'], similarities[i])
                            for i in top_indices]
 
@@ -83,15 +85,49 @@ def get_top_similar_players(input_player_name, top_n=100, consider_positions=Fal
         return None
 
 
-# Example usage for considering players with at least one common player_positions
-input_player_name = 'K. De Bruyne'
-top_similar_players = get_top_similar_players(
-    input_player_name, consider_positions=False)
-top_similar_players_positions = get_top_similar_players(
-    input_player_name, consider_positions=True)
+def get_player_vector(player_name, soccer_data, word_vectors):
+    player_row = soccer_data[soccer_data['short_name'] == player_name]
+    if not player_row.empty:
+        text = ' '.join(player_row[soccer_data.columns].astype(str).values[0])
+        vector = np.mean([word_vectors.get(word, np.zeros(50))
+                         for word in text.split()], axis=0)
+        return vector
+    else:
+        return None
 
 
-def print_top_players(players, title):
+def cluster_players(text_matrix, num_clusters=5):
+    kmeans = KMeans(n_clusters=num_clusters, random_state=42)
+    cluster_assignments = kmeans.fit_predict(text_matrix)
+    return cluster_assignments
+
+
+def visualize_clusters(text_matrix, cluster_assignments, soccer_data, num_clusters, num_players):
+    pca_2d = PCA(n_components=2)
+    player_embeddings_2d = pca_2d.fit_transform(text_matrix)
+
+    label_features = ['overall', 'potential']
+
+    plt.figure(figsize=(10, 8))
+    for cluster_idx in range(num_clusters):
+        cluster_points = player_embeddings_2d[cluster_assignments == cluster_idx]
+        labels = soccer_data.iloc[:num_players][label_features].astype(str).apply(
+            lambda row: ', '.join(row), axis=1).values[cluster_assignments == cluster_idx]
+        plt.scatter(cluster_points[:, 0], cluster_points[:,
+                    1], label=f'Cluster {cluster_idx + 1}')
+
+        for label, x, y in zip(labels, cluster_points[:, 0], cluster_points[:, 1]):
+            plt.annotate(label, (x, y), textcoords="offset points",
+                         xytext=(0, 5), ha='center')
+
+    plt.title('Player Clusters based on Textual Features (2D PCA)')
+    plt.xlabel('PCA Component 1')
+    plt.ylabel('PCA Component 2')
+    plt.legend()
+    plt.show()
+
+
+def print_top_players(players, title, input_player_name):
     if players:
         print(f"{title}:")
         for player in players[:5]:
@@ -105,26 +141,5 @@ def print_top_players(players, title):
             f"No information found for {input_player_name} or no players with at least one common position.")
 
 
-print_top_players(top_similar_players,
-                  f"Top 5 players with the most similar with {input_player_name}")
-print_top_players(top_similar_players_positions,
-                  f"Top 5 players with at least one common position as {input_player_name}")
-
-# Fit K-Means clustering on the data
-num_clusters = 5
-kmeans = KMeans(n_clusters=num_clusters, random_state=42)
-cluster_labels = kmeans.fit_predict(text_matrix)
-
-pca = PCA(n_components=2)
-pca_result = pca.fit_transform(text_matrix)
-
-# Add cluster labels to the soccer_data DataFrame
-soccer_data['cluster_label'] = cluster_labels
-
-# Visualize the clusters
-plt.scatter(pca_result[:, 0], pca_result[:, 1],
-            c=cluster_labels, cmap='viridis')
-plt.title('Player Clusters')
-plt.xlabel('PCA Component 1')
-plt.ylabel('PCA Component 2')
-plt.show()
+if __name__ == "__main__":
+    main()
